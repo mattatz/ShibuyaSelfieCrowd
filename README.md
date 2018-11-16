@@ -14,9 +14,16 @@ Made with Unity.
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/VoxelizedShibuya.gif" width="480px" alt="Voxel" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/LightingCrowd.gif" width="480px" alt="Lighting" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/FloatingCrowd.gif" width="480px" alt="Floating" />
-<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Assets/InstagramPack/Selfie.png" width="480px" alt="Instagram" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/Selfie.gif" width="480px" alt="Selfie" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/SelfieKaleidoscope.gif" width="480px" alt="Kaleidoscope" />
+
+## About Selfie
+
+1. Crawl instagram & download pictures with #selfie tag.
+2. Extract face bounding boxes with [facenet](https://github.com/davidsandberg/facenet) & exclude small faces.
+3. Import them to Unity & pack pictures into a texture with GL API. (See Instagram.cs)
+
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Assets/InstagramPack/Selfie.png" width="480px" alt="Instagram" />
 
 ## Sources
 
