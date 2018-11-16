@@ -11,12 +11,12 @@ Made with Unity.
 
 ## Gallery
 
-![Voxel](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/VoxelizedShibuya.gif)
-![Lighting](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/LightingCrowd.gif)
-![Floating](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/FloatingCrowd.gif)
-![Instagram](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Assets/InstagramPack/Selfie.png) { :width="480px" }
-![Selfie](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/Selfie.gif)
-![Kaleidoscope](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/SelfieKaleidoscope.gif)
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/VoxelizedShibuya.gif" width="480px" alt="Voxel" />
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/LigtingCrowd.gif" width="480px" alt="Lighting" />
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/FloatingCrowd.gif" width="480px" alt="Floating" />
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Assets/InstagramPack/Selfie.png" width="480px" alt="Instagram" />
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/Selfie.gif" width="480px" alt="Selfie" />
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/SelfieKaleidoscope.gif" width="480px" alt="Kaleidoscope" />
 
 ## Sources
 
