@@ -1,7 +1,7 @@
 ShibuyaSelfieCrowd
 =====================
 
-![Channel19](https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/Channel19.gif)
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/Channel19.gif" width="480px" alt="Channel19" />
 
 Movie by [@kaiware007](https://twitter.com/kaiware007)
 
@@ -12,7 +12,7 @@ Made with Unity.
 ## Gallery
 
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/VoxelizedShibuya.gif" width="480px" alt="Voxel" />
-<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/LigtingCrowd.gif" width="480px" alt="Lighting" />
+<img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/LightingCrowd.gif" width="480px" alt="Lighting" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/FloatingCrowd.gif" width="480px" alt="Floating" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Assets/InstagramPack/Selfie.png" width="480px" alt="Instagram" />
 <img src="https://raw.githubusercontent.com/mattatz/ShibuyaSelfieCrowd/master/Captures/Selfie.gif" width="480px" alt="Selfie" />
