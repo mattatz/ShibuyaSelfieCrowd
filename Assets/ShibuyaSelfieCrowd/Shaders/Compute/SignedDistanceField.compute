@@ -1,0 +1,55 @@
+﻿#pragma kernel Generate
+
+Texture2D<float4> _Input;
+RWTexture2D<float4> _Field;
+SamplerState _PointClamp, _LinearClamp;
+
+float _Spread;
+
+float find_signed_distance(float2 center, float2 delta, float spread)
+{
+  float base = _Input.SampleLevel(_PointClamp, center, 0);
+
+  float sx = max(0, center.x - spread);
+  float ex = min(1, center.x + spread);
+  float sy = max(0, center.y - spread);
+  float ey = min(1, center.y + spread);
+
+  float closest = spread;
+
+  float x, y;
+  for (y = sy; y <= ey; y += delta.y)
+  {
+    for (x = sx; x <= ex; x += delta.x)
+    {
+      float2 cur = float2(x, y);
+      float v = _Input.SampleLevel(_PointClamp, cur, 0);
+      if (base != v)
+      {
+        float d = length(center - cur);
+        if (d < closest)
+        {
+          closest = d;
+        }
+      }
+    }
+  }
+    
+  return (-1, 1, step(0.5, base)) * min(closest, spread);
+}
+
+[numthreads(8, 8, 1)]
+void Generate (uint3 id : SV_DispatchThreadID)
+{
+  uint width, height;
+  _Input.GetDimensions(width, height);
+
+  float2 delta = float2(1.0 / width, 1.0 / height);
+  float2 uv = id.xy * delta;
+  float spread = delta.x * _Spread;
+  float d = find_signed_distance(uv, delta, spread);
+  _Field[id.xy] = d.xxxx / spread;
+
+  // float base = _Input.SampleLevel(_LinearClamp, uv, 0);
+  // _Field[id.xy] = base.xxxx;
+}

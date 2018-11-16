@@ -1,0 +1,78 @@
+﻿#pragma kernel Setup
+#pragma kernel Apply
+
+#define THREAD [numthreads(8, 1, 1)]
+#define DISCARD if(id.x > (uint)_InstancesCount) return;
+
+#ifndef PI
+#define PI 3.14159265359
+#endif
+
+#include "UnityCG.cginc"
+#include "../Common/Random.cginc"
+#include "../Common/Matrix.cginc"
+#include "../Common/Quaternion.cginc"
+#include "../Common/Noise/SimplexNoiseGrad3D.cginc"
+#include "../Common/ProcSkinAnim.cginc"
+
+RWStructuredBuffer<GPUBone> _Bones;
+
+CBUFFER_START(Params)
+
+int _InstancesCount;
+int _BonesCount;
+float _BonesCountInv;
+
+float4x4 _WorldToLocal, _LocalToWorld;
+
+float2 _DT;
+
+CBUFFER_END
+
+THREAD
+void Setup(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD
+
+  int index = id.x * _BonesCount;
+
+  float4x4 offset = _WorldToLocal;
+
+  for (int i = 0; i < _BonesCount; i++)
+  {
+    GPUBone parent = _Bones[index + i - 1];
+    GPUBone bone = _Bones[index + i];
+
+    // convert global initial to local space 
+    bone.local = mul(offset, bone.local);
+
+    _Bones[index + i] = bone;
+
+    offset = bone.offset; // with hierarchy
+  }
+}
+
+THREAD
+void Apply(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD
+
+  int index = id.x * _BonesCount;
+
+  GPUBone root = _Bones[index];
+
+  float4x4 offset = _LocalToWorld;
+
+  for (int i = 0; i < _BonesCount; i++)
+  {
+    GPUBone bone = _Bones[index + i];
+
+    float4x4 diff = GetBoneMatrix(bone);
+    offset = mul(offset, mul(diff, bone.local));
+
+    bone.combined = mul(offset, bone.offset); // with hierarchy.
+    // bone.combined = mul(mul(offset, mul(bone.local, GetBoneMatrix(bone))), bone.offset); // without hierarchy.
+
+    _Bones[index + i] = bone;
+  }
+}

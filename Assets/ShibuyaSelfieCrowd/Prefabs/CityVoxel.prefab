@@ -1,0 +1,106 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1001 &100100000
+Prefab:
+  m_ObjectHideFlags: 1
+  serializedVersion: 2
+  m_Modification:
+    m_TransformParent: {fileID: 0}
+    m_Modifications: []
+    m_RemovedComponents: []
+  m_SourcePrefab: {fileID: 0}
+  m_RootGameObject: {fileID: 1535804856621780}
+  m_IsPrefabAsset: 1
+--- !u!1 &1535804856621780
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInternal: {fileID: 100100000}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4238389829100210}
+  - component: {fileID: 114919380431221334}
+  m_Layer: 0
+  m_Name: CityVoxel
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4238389829100210
+Transform:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInternal: {fileID: 100100000}
+  m_GameObject: {fileID: 1535804856621780}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_RootOrder: 0
+  m_LocalEulerAnglesHint: {x: -90, y: 0, z: 0}
+--- !u!114 &114919380431221334
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInternal: {fileID: 100100000}
+  m_GameObject: {fileID: 1535804856621780}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: de2156b391cef7c44a271a7e623fef46, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  tileTag: 0
+  mesh: {fileID: 4300000, guid: ae192408b438af34995fa57f87df9ed1, type: 3}
+  resolution: 32
+  level: 0
+  count: 8192
+  voxelizer: {fileID: 7200000, guid: 5fdfd9c0be0cd42fca24f981cc152dd4, type: 3}
+  voxelControl: {fileID: 7200000, guid: adeb741bfab927143b21d199ec3fd3e8, type: 3}
+  particleUpdate: {fileID: 7200000, guid: 24ebb0631988a0745b0b21f45cb38c18, type: 3}
+  particleMode: 1
+  voxelMode: 1
+  volume: 1
+  voxelVisible: 1
+  unitLength: 1
+  size: 0
+  edge: 0.5
+  useCapture: 0
+  usePack: 0
+  emission: {r: 4.594794, g: 4.594794, b: 4.594794, a: 1}
+  useEmission: 0
+  emissionRate: 0.01
+  emissionRandom: 0.01
+  emissionOffset: 0
+  speedScaleMin: 2
+  speedScaleMax: 5
+  speedLimit: 32
+  drag: 0.1
+  gravity: {x: 0, y: 0, z: 20}
+  speedToSpin: 60
+  maxSpin: 100
+  noiseAmplitude: 4
+  noiseFrequency: 0.01
+  noiseMotion: 1
+  frame: 1
+  delaySpeed: 1.6
+  transformSpeed: 1.5
+  clipSpeed: 1.5
+  flowSpeed: 0.1
+  baseClipBounds:
+    m_Center: {x: 0, y: 0, z: 0}
+    m_Extent: {x: 0, y: 0, z: 0}
+  clipBounds:
+    m_Center: {x: 0, y: 0, z: 0}
+    m_Extent: {x: 0, y: 0, z: 0}
+  flowRandom: 0
+  flowRandomFreq: 100
+  throttle: 0.1
+  gridResolution: 256
+  tileOffset: {x: 0, y: 0}
+  margin: 1
+  bounds:
+    m_Center: {x: 0, y: 0, z: 0}
+    m_Extent: {x: 0, y: 0, z: 0}
+  material: {fileID: 2100000, guid: 1c87ff4e63f6fd84287c611be0664bbe, type: 2}

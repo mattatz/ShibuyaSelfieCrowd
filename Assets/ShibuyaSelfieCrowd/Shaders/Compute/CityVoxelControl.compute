@@ -1,0 +1,154 @@
+﻿#pragma kernel Default
+#pragma kernel Depth
+#pragma kernel FloorGrid
+
+#define THREAD1D [numthreads(128, 1, 1)]
+#define THREAD3D [numthreads(8, 8, 8)]
+
+#include "UnityCG.cginc"
+#include "Assets/Packages/Voxelizer/Shaders/Voxel.hlsl"
+#include "Assets/Common/Shaders/Random.hlsl"
+#include "Assets/Common/Shaders/Noise/SimplexNoise3D.hlsl"
+
+CBUFFER_START(VoxelParams)
+
+float3 _Start, _End, _Size;
+float _UnitLength, _InvUnitLength, _HalfUnitLength;
+uint _Width, _Height, _Depth;
+float _DT, _Throttle;
+
+CBUFFER_END
+
+SamplerState _LinearClamp, _PointRepeat;
+
+RWStructuredBuffer<Voxel> _VoxelBuffer;
+
+Texture2D<float4> _CaptureDepth;
+float3 _CaptureBoundsMin, _CaptureBoundsMax;
+
+uint _GridResolution;
+float3 _TileBoundsMin, _TileBoundsMax;
+float3 _WholeBoundsMin, _WholeBoundsMax;
+
+float4 _Tile;
+float2 _TileOffset;
+
+uint get_voxel_index(int x, int y, int z)
+{
+  return z * (_Width * _Height) + y * _Width + x;
+}
+
+float3 get_voxel_position(int x, int y, int z)
+{
+  return float3(
+    _Start.x + _UnitLength * x + _HalfUnitLength,
+    _Start.y + _UnitLength * y + _HalfUnitLength,
+    _Start.z + _UnitLength * z + _HalfUnitLength
+  );
+}
+
+float2 ground_uv(float3 p)
+{
+  float3 size = _CaptureBoundsMax.xyz - _CaptureBoundsMin.xyz;
+  float ux = (p.x - _CaptureBoundsMin.x) / size.x;
+  float uz = (p.z - _CaptureBoundsMin.z) / size.z;
+  return float2(ux, uz);
+}
+
+float3 ground(float3 p)
+{
+  float2 uv = ground_uv(p);
+  float depth = _CaptureDepth.SampleLevel(_LinearClamp, uv, 0).x;
+  float h = _CaptureBoundsMax.y - _CaptureBoundsMin.y;
+  p.y = depth * h + _CaptureBoundsMin.y;
+  return p;
+}
+
+THREAD1D
+void Default(uint3 id : SV_DispatchThreadID)
+{
+}
+
+THREAD3D
+void Depth(
+  uint3 id : SV_DispatchThreadID
+)
+{
+  uint x = id.x;
+  uint y = id.y;
+  uint z = id.z;
+  if (x >= _Width || y >= _Height || z >= _Depth)
+    return;
+
+  float3 p = get_voxel_position(x, y, z);
+  uint idx = get_voxel_index(x, y, z);
+
+  Voxel voxel = _VoxelBuffer[idx];
+  voxel.position = p;
+  voxel.size = (_UnitLength).xxx;
+
+  float2 uv = (p.xy - _TileBoundsMin.xy) / (_TileBoundsMax.xy - _TileBoundsMin.xy);
+  uv = uv * _Tile.xy + _Tile.zw;
+  uv.y = 1.0 - uv.y;
+  uv.xy += _TileOffset;
+
+  float height = (_WholeBoundsMax.z - _WholeBoundsMin.z);
+  float depth = _CaptureDepth.SampleLevel(_PointRepeat, uv, 0).x * height + _WholeBoundsMin.z;
+
+  // voxel.fill = voxel.fill || (p.z <= depth);
+
+  float3 hs = voxel.size * 0.5;
+  // bool contains = (_Start.x <= voxel.position.x - hs.x && _Start.y <= voxel.position.y - hs.y) && (voxel.position.x + hs.x <= _End.x && voxel.position.y + hs.y <= _End.y);
+  bool contains = (_Start.x <= voxel.position.x - hs.x && _Start.y <= voxel.position.y - hs.y) && (voxel.position.x + hs.x <= _End.x && voxel.position.y + hs.y <= _End.y);
+  voxel.fill = (p.z <= depth) && contains;
+
+  _VoxelBuffer[idx] = voxel;
+}
+
+THREAD1D
+void FloorGrid(
+  uint3 id : SV_DispatchThreadID
+)
+{
+  uint idx = id.x;
+  uint count, stride;
+  _VoxelBuffer.GetDimensions(count, stride);
+  if (idx >= count)
+    return;
+
+  Voxel voxel = _VoxelBuffer[idx];
+
+  count = _GridResolution * _GridResolution;
+
+  float inv_resolution = 1.0 / _GridResolution;
+  uint y = idx / _GridResolution;
+  uint x = idx % _GridResolution;
+
+  float3 tsize = _TileBoundsMax - _TileBoundsMin;
+
+  float2 uv = float2(x * inv_resolution, y * inv_resolution);
+  uv = uv * _Tile.xy + _Tile.zw;
+  uv.y = 1.0 - uv.y;
+  uv.xy += _TileOffset;
+
+  voxel.position = float3(tsize.x * (x * inv_resolution), tsize.y * (y * inv_resolution), 0) + _TileBoundsMin;
+
+  float height = (_WholeBoundsMax.z - _WholeBoundsMin.z);
+  float depth = _CaptureDepth.SampleLevel(_PointRepeat, uv, 0).x * height + _WholeBoundsMin.z;
+
+  // float2 center = (_WholeBoundsMax.xy + _WholeBoundsMin.xy) * 0.5;
+  // float l = length(center - voxel.position.xy) * 0.1;
+  // depth *= (sin(l + _Time.y) + 1.0) * 0.5;
+
+  // voxel.position.z = _WholeBoundsMin.z + depth * 0.5;
+  voxel.position.z = depth * 0.5;
+
+  voxel.size = float3(tsize.x * inv_resolution, tsize.y * inv_resolution, depth);
+
+  float3 hs = voxel.size * 0.5;
+  bool contains = (_Start.x <= voxel.position.x - hs.x && _Start.y <= voxel.position.y - hs.y) && (voxel.position.x + hs.x <= _End.x && voxel.position.y + hs.y <= _End.y);
+  voxel.fill = idx < count && contains;
+
+  _VoxelBuffer[idx] = voxel;
+}
+

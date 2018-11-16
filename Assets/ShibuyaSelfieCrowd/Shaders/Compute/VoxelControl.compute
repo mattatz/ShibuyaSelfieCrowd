@@ -1,0 +1,101 @@
+﻿#pragma kernel Default
+#pragma kernel Glitch
+#pragma kernel Clip
+
+#define THREAD [numthreads(8, 8, 1)]
+
+#include "UnityCG.cginc"
+#include "Assets/Packages/Voxelizer/Shaders/Voxel.hlsl"
+#include "Assets/Common/Shaders/Random.hlsl"
+#include "Assets/Common/Shaders/Noise/SimplexNoise3D.hlsl"
+
+CBUFFER_START(VoxelParams)
+
+float3 _Start, _End, _Size;
+float _Unit, _InvUnit, _HalfUnit;
+
+int _Width, _Height, _Depth;
+
+float _DT;
+float _Throttle;
+
+float3 _ClipMin, _ClipMax;
+float _Seed;
+
+CBUFFER_END
+
+RWStructuredBuffer<Voxel> _VoxelBuffer;
+
+int get_voxel_index(int x, int y, int z)
+{
+  return z * (_Width * _Height) + y * _Width + x;
+}
+
+float3 get_voxel_position(int x, int y, int z)
+{
+  return float3(
+        _Start.x + _Unit * x + _HalfUnit,
+        _Start.y + _Unit * y + _HalfUnit,
+        _Start.z + _Unit * z + _HalfUnit
+    );
+}
+
+THREAD
+void Default(uint3 id : SV_DispatchThreadID)
+{
+}
+
+THREAD
+void Glitch(uint3 id : SV_DispatchThreadID)
+{
+  int x = (int) id.x;
+  int y = (int) id.y;
+
+  if (x >= _Width)
+    return;
+  if (y >= _Height)
+    return;
+
+  float seed = nrand(id.xy + float2(_Seed, 0));
+  for (int z = _Depth - 1; z >= 0; z--)
+  {
+    uint vid = get_voxel_index(x, y, z);
+    Voxel v = _VoxelBuffer[vid];
+    if (v.fill)
+    {
+      if (seed < _Throttle)
+      {
+        for (int z2 = z; z2 >= 0; z2--)
+        {
+          uint vid2 = get_voxel_index(x, y, z2);
+          Voxel v2 = _VoxelBuffer[vid2];
+          v2.fill = true;
+          _VoxelBuffer[vid2] = v2;
+        }
+        break;
+      }
+    }
+  }
+}
+
+THREAD
+void Clip(uint3 id : SV_DispatchThreadID)
+{
+  int x = (int) id.x;
+  int y = (int) id.y;
+
+  if (x >= _Width || x < _ClipMin.x || x > _ClipMax.x)
+    return;
+  if (y >= _Height || y < _ClipMin.y || y > _ClipMax.y)
+    return;
+
+  int start = max(0, _ClipMin.z);
+  int end = min(_ClipMax.z, _Depth);
+  for (int z = start; z < end; z++)
+  {
+    uint vid = get_voxel_index(x, y, z);
+    Voxel v = _VoxelBuffer[vid];
+    v.fill = true;
+    _VoxelBuffer[vid] = v;
+  }
+}

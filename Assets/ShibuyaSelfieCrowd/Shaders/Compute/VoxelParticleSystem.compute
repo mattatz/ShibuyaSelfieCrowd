@@ -1,0 +1,318 @@
+﻿#pragma kernel Setup
+#pragma kernel Immediate
+#pragma kernel Delay
+#pragma kernel Transform
+#pragma kernel Clip
+#pragma kernel Flow
+#pragma kernel FlowRandom
+
+#define THREAD [numthreads(8, 1, 1)]
+#define DISCARD_OVERFLOW if (id.x >= _ParticleCount) return;
+
+#include "Assets/Packages/Voxelizer/Shaders/Voxel.hlsl"
+
+#include "Assets/Common/Shaders/Random.hlsl"
+#include "Assets/Common/Shaders/Easing.hlsl"
+#include "Assets/Common/Shaders/Quaternion.hlsl"
+#include "Assets/Common/Shaders/Noise/SimplexNoiseGrad3D.hlsl"
+#include "../Common/VoxelParticle.hlsl"
+
+uint _Width, _Height, _Depth;
+float _UnitLength;
+int _Level;
+
+StructuredBuffer<Voxel> _VoxelBuffer;
+uint _VoxelCount;
+
+RWStructuredBuffer<VParticle> _ParticleBuffer;
+uint _ParticleCount;
+
+float4 _Time;
+float2 _DT;
+
+half2 _Speed; // min, max
+half2 _Damper; // drag, speed_imit
+half3 _Gravity;
+half2 _Life; // dt / max_life, dt / (max_life * speed_to_life)
+half2 _Spin; // max_spin * dt, speed_to_spin * dt
+half2 _NoiseParams; // frequency, amplitude * dt
+float3 _NoiseOffset;
+
+half _DelaySpeed, _TransformSpeed, _ClipSpeed, _FlowSpeed;
+half _FlowRandomThrottle;
+
+SamplerState _LinearRepeat;
+
+float3 RotationAxis(float2 uv)
+{
+    // http://mathworld.wolfram.com/SpherePointPicking.html
+  float u = nrand(uv, 10) * 2 - 1;
+  float u2 = sqrt(1 - u * u);
+  float sn, cs;
+  sincos(nrand(uv, 11) * PI * 2, sn, cs);
+  return float3(u2 * cs, u2 * sn, u);
+}
+
+float3 UpdatePosition(VParticle particle, uint2 id)
+{
+  float3 p = particle.position;
+  float3 v = particle.velocity;
+
+    // Apply the velocity cap.
+  float lv = max(length(v.xyz), 1e-6);
+  v.xyz = v * min(lv, _Damper.y) / lv;
+
+    // Update the position with the velocity.
+  p.xyz += v.xyz * _DT.x;
+  return p;
+}
+
+float3 UpdateVelocity(VParticle particle, uint2 id)
+{
+  float3 p = particle.position;
+  float3 v = particle.velocity;
+
+  // Drag and acceleration
+  v.xyz = v.xyz * _Damper.x + _Gravity.xyz;
+
+  // Accelerate with the turbulent noise field.
+  float3 seed = p.xyz;
+  float3 np = (seed + _NoiseOffset) * _NoiseParams.x;
+  float3 n1 = snoise_grad(np);
+  float3 n2 = snoise_grad(np + float3(21.83, 13.28, 7.32));
+  v.xyz += cross(n1, n2) * _NoiseParams.y * particle.speed;
+  return v;
+}
+
+float4 UpdateRotation(VParticle particle, uint2 id)
+{
+  float4 r = particle.rotation;
+  float3 v = particle.velocity;
+
+  // Calculate the angular velocity.
+  float delta = min(_Spin.x, length(v.xyz) * _Spin.y);
+  delta *= 1 - nrand(id, 18) * 0.5;
+
+  // Convert it to a quaternion.
+  float sn, cs;
+  sincos(delta, sn, cs);
+  float4 dq = float4(RotationAxis(id) * sn, cs);
+
+  // Apply the quaternion and normalize it.
+  return normalize(qmul(dq, r));
+}
+
+void UpdateFlow(inout VParticle particle, Voxel v, uint3 id)
+{
+  float dt = saturate(_DT.x * particle.speed * _FlowSpeed);
+  particle.lifetime -= dt;
+  particle.position = UpdatePosition(particle, id.xy);
+  particle.velocity = UpdateVelocity(particle, id.xy);
+  particle.rotation = UpdateRotation(particle, id.xy);
+
+  // float3 scale = (float) v.fill * float3(_UnitLength, _UnitLength, _UnitLength) * smoothstep(0, 0.25, particle.lifetime) * smoothstep(1.0, 0.5, particle.lifetime);
+  float3 scale = (float) v.fill * float3(_UnitLength, _UnitLength, _UnitLength) * smoothstep(0, 0.25, particle.lifetime) * saturate(1.0 - particle.lifetime);
+  particle.scale = lerp(particle.scale, scale, saturate(dt * 10.0));
+}
+
+uint3 GetPosition(uint index)
+{
+  uint3 position;
+  uint wh = _Width * _Height;
+  position.z = index / wh;
+  int rem = index % wh;
+  position.y = rem / _Width;
+  position.x = rem % _Width;
+  return position;
+}
+
+uint GetIndex(uint3 position, uint width, uint height, uint depth)
+{
+  return position.x + position.y * width + position.z * (width * height);
+}
+
+Voxel GetVoxel(uint i)
+{
+  if (i < _VoxelCount)
+  {
+    return _VoxelBuffer[i];
+  }
+
+  Voxel v;
+  v.fill = false;
+  v.position = float3(0, 0, 0);
+  v.uv = float2(0, 0);
+  return v;
+}
+
+THREAD
+void Setup(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  Voxel v = GetVoxel(id.x);
+
+  VParticle particle;
+  particle.position = v.position;
+  particle.rotation = QUATERNION_IDENTITY;
+  particle.scale = float3(_UnitLength, _UnitLength, _UnitLength);
+  particle.uv = float2(0, 0);
+  particle.velocity = float3(0, 0, 0);
+  particle.speed = lerp(_Speed.x, _Speed.y, nrand(id.xy));
+  particle.lifetime = 1.0;
+  particle.flow = false;
+  _ParticleBuffer[id.x] = particle;
+}
+
+THREAD
+void Immediate(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  Voxel v = GetVoxel(id.x);
+  VParticle particle = _ParticleBuffer[id.x];
+
+  if (particle.flow)
+  {
+    UpdateFlow(particle, v, id);
+    particle.flow = (particle.lifetime >= 0.0);
+  }
+  else
+  {
+    particle.position = v.position;
+    particle.velocity = float3(0, 0, 0);
+    particle.uv = v.uv;
+
+    particle.scale = float3(1, 1, 1) * lerp(0, _UnitLength, (float) v.fill);
+    particle.rotation = QUATERNION_IDENTITY;
+    particle.lifetime = 1.0;
+    particle.flow = false;
+  }
+  _ParticleBuffer[id.x] = particle;
+}
+
+THREAD
+void Delay(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  Voxel v = GetVoxel(id.x);
+  VParticle particle = _ParticleBuffer[id.x];
+
+  if (particle.flow)
+  {
+    UpdateFlow(particle, v, id);
+    particle.flow = (particle.lifetime >= 0.0);
+  }
+  else
+  {
+    float dt = saturate(_DT.x * particle.speed * _DelaySpeed);
+    particle.position = v.position;
+    particle.velocity = lerp(particle.velocity, float3(0, 0, 0), dt);
+    particle.uv = v.uv;
+
+    float t = step(length(v.position), 0.0);
+    particle.scale = lerp(particle.scale, float3(_UnitLength, _UnitLength, _UnitLength) * (float) v.fill, max(t, dt));
+    particle.rotation = q_slerp(particle.rotation, QUATERNION_IDENTITY, dt);
+    particle.lifetime = 1.0;
+  }
+
+  _ParticleBuffer[id.x] = particle;
+}
+
+THREAD
+void Transform(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  Voxel v = GetVoxel(id.x);
+  VParticle particle = _ParticleBuffer[id.x];
+  if (particle.flow)
+  {
+    UpdateFlow(particle, v, id);
+    particle.flow = (particle.lifetime >= 0.0);
+  }
+  else
+  {
+    float dt = saturate(_DT.x * particle.speed * _TransformSpeed);
+    particle.position = lerp(particle.position, v.position, dt);
+    particle.velocity = lerp(particle.velocity, float3(0, 0, 0), dt);
+    particle.uv = particle.uv;
+
+    particle.scale = lerp(particle.scale, float3(_UnitLength, _UnitLength, _UnitLength) * (float) v.fill, dt);
+    particle.rotation = q_slerp(particle.rotation, QUATERNION_IDENTITY, dt);
+    particle.lifetime = 1.0;
+  }
+
+  _ParticleBuffer[id.x] = particle;
+}
+
+float3 _ClipMin, _ClipMax;
+
+THREAD
+void Clip(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  Voxel v = GetVoxel(id.x);
+  VParticle particle = _ParticleBuffer[id.x];
+  if (particle.flow)
+  {
+    UpdateFlow(particle, v, id);
+    particle.flow = (particle.lifetime >= 0.0);
+  }
+  else
+  {
+    float dt = saturate(_DT.x * particle.speed * _ClipSpeed);
+    float min = step(_ClipMin.x, v.position.x) * step(_ClipMin.y, v.position.y) * step(_ClipMin.z, v.position.z);
+    float max = step(v.position.x, _ClipMax.x) * step(v.position.y, _ClipMax.y) * step(v.position.z, _ClipMax.z);
+    float fill = (float) v.fill * min * max;
+
+    particle.position = v.position;
+    particle.velocity = float3(0, 0, 0);
+    particle.uv = v.uv;
+
+    particle.scale = lerp(particle.scale, float3(_UnitLength, _UnitLength, _UnitLength) * fill, dt);
+    particle.rotation = QUATERNION_IDENTITY;
+    particle.lifetime = 1.0;
+  }
+
+  _ParticleBuffer[id.x] = particle;
+}
+
+THREAD
+void Flow(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  VParticle particle = _ParticleBuffer[id.x];
+  particle.flow = true;
+
+  Voxel v = GetVoxel(id.x);
+  if (particle.lifetime < 0.0)
+  {
+    particle.position = v.position;
+    particle.uv = v.uv;
+    particle.velocity = float3(0, 0, 0);
+
+    particle.rotation = QUATERNION_IDENTITY;
+    particle.scale = float3(0, 0, 0);
+    particle.lifetime = 1.0;
+  }
+  else
+  {
+    UpdateFlow(particle, v, id);
+  }
+
+  _ParticleBuffer[id.x] = particle;
+}
+
+THREAD
+void FlowRandom(uint3 id : SV_DispatchThreadID)
+{
+  DISCARD_OVERFLOW
+
+  VParticle particle = _ParticleBuffer[id.x];
+  particle.flow = particle.flow || (nrand(id.xy, _Time.x) < _FlowRandomThrottle);
+  _ParticleBuffer[id.x] = particle;
+}

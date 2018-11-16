@@ -1,0 +1,444 @@
+﻿#pragma kernel Init
+#pragma kernel Update
+
+#pragma kernel Wander
+#pragma kernel Gather
+#pragma kernel Flow
+#pragma kernel Boids
+
+#define BLOCK_SIZE 128
+#define THREAD [numthreads(BLOCK_SIZE, 1, 1)]
+
+#include "Assets/Common/Shaders/Random.hlsl"
+#include "Assets/Common/Shaders/Quaternion.hlsl"
+#include "Assets/Common/Shaders/Noise/SimplexNoiseGrad3D.hlsl"
+
+#include "../Common/Human.hlsl"
+
+StructuredBuffer<Human> _CrowdRead;
+RWStructuredBuffer<Human> _Crowd;
+float _Throttle;
+
+Texture2D<float4> _Depth, _SDF;
+SamplerState _LinearClamp;
+float _Gradient;
+
+StructuredBuffer<float4x4> _EmitBounds;
+
+float _Size;
+float2 _ScaleRange;
+
+float3 _EmitMin, _EmitMax;
+float3 _BoundsMin, _BoundsMax;
+
+float _Decay;
+float _Time, _DT;
+
+float _WanderRadius, _WanderDistance, _WanderWeight;
+float _FlowWeight, _FlowRadius;
+
+float3 _Center;
+float _GatherWeight, _GatherRadius, _GatherHole, _GatherDistance;
+
+float _SeparateNeighborhoodRadius, _AlignmentNeighborhoodRadius, _CohesionNeighborhoodRadius;
+float _SeparateWeight, _AlignmentWeight, _CohesionWeight;
+float _MaxSpeed, _MaxSteerForce;
+
+half2 _Damper; // drag, speed_imit
+half3 _Gravity;
+half2 _Spin; // max_spin * dt, speed_to_spin * dt
+half2 _NoiseParams; // frequency, amplitude * dt
+float3 _NoiseOffset;
+
+float2 ground_uv(float3 p)
+{
+  float3 size = _BoundsMax.xyz - _BoundsMin.xyz;
+  float ux = (p.x - _BoundsMin.x) / size.x;
+  float uz = (p.z - _BoundsMin.z) / size.z;
+  return float2(ux, uz);
+}
+
+float2 gradient(float3 p)
+{
+  static const float delta = 1.0 / 256;
+  float l = _SDF.SampleLevel(_LinearClamp, ground_uv(p) - float2(delta, 0), 0).x;
+  float r = _SDF.SampleLevel(_LinearClamp, ground_uv(p) + float2(delta, 0), 0).x;
+  float t = _SDF.SampleLevel(_LinearClamp, ground_uv(p) - float2(0, delta), 0).x;
+  float b = _SDF.SampleLevel(_LinearClamp, ground_uv(p) + float2(0, delta), 0).x;
+  return float2(l - r, t - b);
+}
+
+float3 ground(float3 p)
+{
+  float3 size = _BoundsMax.xyz - _BoundsMin.xyz;
+  float2 uv = ground_uv(p);
+  float depth = _Depth.SampleLevel(_LinearClamp, uv, 0).x;
+  p.y = depth * size.y + _BoundsMin.y;
+  return p;
+}
+
+float2 limit(float2 v, float lim)
+{
+  float l = length(v);
+  return normalize(v) * min(lim, l);
+}
+
+float3 InitPosition(uint3 id)
+{
+  uint count, stride;
+  _EmitBounds.GetDimensions(count, stride);
+  float4x4 b = _EmitBounds[floor(count * nrand(id.xy))];
+  float3 p = float3(
+    nrand(id.xy + float2(0, 3.17)),
+    0,
+    nrand(id.xy + float2(19.7, 3.17))
+  ) - 0.5;
+  float3 wp = mul(b, float4(p, 1)).xyz;
+  return ground(wp);
+}
+
+float GatherLength(uint3 id)
+{
+  return lerp(_GatherHole, _GatherDistance, nrand(id.yx));
+}
+
+float2 GatherPosition(float2 p, uint3 id) {
+  float gl = GatherLength(id);
+  float2 target = normalize(p - _Center.xz) * gl + _Center.xz;
+  float2 dir = target - p;
+  // float2 v = random_point_on_circle(id.xy) * GatherLength(id);
+  // float2 p = _Center.xz + v;
+  // float2 grad = gradient(float3(p.x, 0, p.y));
+  // target += grad * _Gradient;
+  return target;
+}
+
+THREAD
+void Init(uint3 id : SV_DispatchThreadID)
+{
+  uint count, stride;
+  _Crowd.GetDimensions(count, stride);
+  if (id.x >= count)
+    return;
+
+  uint idx = id.x;
+  Human h = _Crowd[idx];
+
+  h.position = InitPosition(id);
+  h.scale = (_Size).xxx * lerp(_ScaleRange.x, _ScaleRange.y, nrand(float2(id.xy)));
+  h.velocity = (0.0).xxx;
+  h.rotation = QUATERNION_IDENTITY;
+  h.lifetime = 0;
+  h.alive = false;
+
+  _Crowd[idx] = h;
+}
+
+THREAD
+void Update(uint3 id : SV_DispatchThreadID)
+{
+  uint count, stride;
+  _Crowd.GetDimensions(count, stride);
+  if (id.x >= count)
+    return;
+
+  uint idx = id.x;
+  Human h = _Crowd[idx];
+
+  float2 dir = h.position.xz - _Center.xz;
+  float ld = length(dir);
+
+  if (ld < _GatherHole)
+  {
+    h.velocity.xz += normalize(dir) * saturate(_GatherHole - ld) * 0.2;
+  }
+
+  h.velocity *= _Decay;
+  float x = nrand(id.xy + float2(0, 9.127));
+  h.position += h.velocity * _DT * lerp(0.75, 1.1, x);
+
+  static const float height_threshold = 30.0;
+  float3 position = ground(h.position);
+  h.position = lerp(h.position, position, step(abs(h.position.y - position.y), height_threshold));
+
+  float lv = length(h.velocity);
+  if (lv > 0.0001)
+  {
+    float3 nv = normalize(h.velocity);
+    float4 rot = q_look_at(nv, float3(0, -1, 0));
+    h.rotation = q_slerp(h.rotation, rot, _DT);
+  }
+
+  float seed = nrand(id.xy + float2(0, 17.39));
+  h.lifetime += _DT * lerp(-1, 1, step(seed, _Throttle));
+  h.lifetime = saturate(h.lifetime);
+  h.alive = h.lifetime > 0.0;
+
+  _Crowd[idx] = h;
+}
+
+groupshared Human _shared_Crowd[BLOCK_SIZE];
+
+THREAD
+void Wander(
+  uint3 id : SV_DispatchThreadID,
+  uint3 Gid : SV_GroupID,
+	uint3 GTid : SV_GroupThreadID,
+	uint GI : SV_GroupIndex
+)
+{
+  uint count, stride;
+  _Crowd.GetDimensions(count, stride);
+
+  uint idx = id.x;
+  if (idx >= count)
+    return;
+
+  Human h = _Crowd[idx];
+
+  float offset = nrand(id.yx) * 100.0;
+  float r = nrand(id.xy + float2(0, floor(_Time * 0.25 + offset))) * PI * 2.0;
+	float2 dir = float2(cos(r), sin(r));
+
+  float2 forward = rotate_vector(float3(0, 0, 1), h.rotation).xz;
+  float2 tv = (dir * _WanderRadius + forward * _WanderDistance);
+  float2 force = (tv - h.velocity.xz);
+  h.velocity.xz += force * _WanderWeight;
+  h.velocity.xz += gradient(h.position) * _Gradient;
+
+  _Crowd[idx] = h;
+}
+
+THREAD
+void Gather(
+  uint3 id : SV_DispatchThreadID,
+  uint3 Gid : SV_GroupID,
+	uint3 GTid : SV_GroupThreadID,
+	uint GI : SV_GroupIndex
+)
+{
+  uint count, stride;
+  _Crowd.GetDimensions(count, stride);
+
+  const uint idx = id.x;
+  Human h = _CrowdRead[idx];
+  float2 P_position = h.position.xz;
+  float2 P_velocity = h.velocity.xz;
+
+  float2 force = float2(0, 0);
+
+  float2 sepPosSum = float2(0, 0);
+  int sepCount = 0;
+
+	[loop]
+  for (uint N_block_ID = 0; N_block_ID < count; N_block_ID += BLOCK_SIZE)
+  {
+    _shared_Crowd[GI] = _CrowdRead[N_block_ID + GI];
+
+    GroupMemoryBarrierWithGroupSync();
+
+    for (int N_tile_ID = 0; N_tile_ID < BLOCK_SIZE; N_tile_ID++)
+    {
+      float2 N_position = _shared_Crowd[N_tile_ID].position.xz;
+      float2 N_velocity = _shared_Crowd[N_tile_ID].velocity.xz;
+      bool alive = _shared_Crowd[N_tile_ID].alive;
+
+      float2 diff = P_position - N_position;
+      float dist = sqrt(dot(diff, diff));
+
+      if (alive && dist > 0.0 && dist <= _SeparateNeighborhoodRadius)
+      {
+        float2 repulse = normalize(P_position - N_position);
+        repulse /= dist;
+        sepPosSum += repulse;
+        sepCount++;
+      }
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+  }
+
+  if (idx >= count || !h.alive)
+    return;
+
+  float2 sepSteer = (0.0).xx;
+  if (sepCount > 0)
+  {
+    sepSteer = sepPosSum / (float) sepCount;
+    sepSteer = normalize(sepSteer) * _MaxSpeed;
+    sepSteer = sepSteer - P_velocity;
+    sepSteer = limit(sepSteer, _MaxSteerForce);
+  }
+  // force += sepSteer * _SeparateWeight;
+  
+  float2 p = GatherPosition(P_position, id);
+  float2 dir = (p - P_position);
+  force += limit(dir, _MaxSteerForce) * _GatherWeight;
+
+  // h.position.xz = p; // debug
+
+  float threshold = lerp(0.1, 1.0, saturate(nrand(id.xy))) * _GatherRadius;
+  float x = step(threshold, length(dir));
+  h.velocity.xz += force * x;
+
+  float lv = length(h.velocity.xz);
+  if (lv < 0.01)
+  {
+    float2 dir = _Center.xz - h.position.xz;
+    h.rotation = q_slerp(h.rotation, q_look_at(normalize(float3(dir.x, 0, dir.y)), float3(0, -1, 0)), _DT);
+  }
+
+  h.velocity.xz += gradient(h.position) * _Gradient;
+
+  _Crowd[idx] = h;
+}
+
+THREAD
+void Flow(
+  uint3 id : SV_DispatchThreadID,
+  uint3 Gid : SV_GroupID,
+	uint3 GTid : SV_GroupThreadID,
+	uint GI : SV_GroupIndex
+)
+{
+  uint count, stride;
+  _Crowd.GetDimensions(count, stride);
+
+  uint idx = id.x;
+  if (idx >= count)
+    return;
+
+  Human h = _Crowd[idx];
+
+  float2 p = _Center.xz - h.position.xz;
+  float2 v = float2(p.y, -p.x);
+
+  float lv = length(v);
+  if (lv > 0.0)
+  {
+    h.velocity.xz += normalize(v) * _FlowWeight * saturate(lv / _FlowRadius);
+
+    float2 target = GatherPosition(h.position.xz, id);
+    float2 dir = target - h.position.xz;
+    float ldir = length(dir);
+    if (ldir > 0.0)
+    {
+      h.velocity.xz += normalize(dir) * min(ldir, _GatherWeight);
+    }
+    // h.velocity.xz += normalize(dir);
+  }
+
+  h.velocity.xz += gradient(h.position) * _Gradient;
+
+  _Crowd[idx] = h;
+}
+
+THREAD
+void Boids(
+  uint3 id : SV_DispatchThreadID,
+  uint3 Gid : SV_GroupID,
+	uint3 GTid : SV_GroupThreadID,
+	uint GI : SV_GroupIndex
+)
+{
+  uint count, stride;
+  _Crowd.GetDimensions(count, stride);
+
+  const unsigned int idx = id.x;
+  Human h = _CrowdRead[idx];
+  float2 P_position = h.position.xz;
+  float2 P_velocity = h.velocity.xz;
+
+  float2 force = float2(0, 0);
+
+  float2 sepPosSum = float2(0, 0);
+  int sepCount = 0;
+
+  float2 aliVelSum = float2(0, 0);
+  int aliCount = 0;
+
+  float2 cohPosSum = float2(0, 0);
+  int cohCount = 0;
+
+	[loop]
+  for (uint N_block_ID = 0; N_block_ID < count; N_block_ID += BLOCK_SIZE)
+  {
+    _shared_Crowd[GI] = _CrowdRead[N_block_ID + GI];
+
+    GroupMemoryBarrierWithGroupSync();
+
+    for (int N_tile_ID = 0; N_tile_ID < BLOCK_SIZE; N_tile_ID++)
+    {
+      float2 N_position = _shared_Crowd[N_tile_ID].position.xz;
+      float2 N_velocity = _shared_Crowd[N_tile_ID].velocity.xz;
+      bool alive = _shared_Crowd[N_tile_ID].alive;
+
+      if (!alive)
+        continue;
+
+      float2 diff = P_position - N_position;
+      float dist = sqrt(dot(diff, diff));
+
+      if (dist > 0.0 && dist <= _SeparateNeighborhoodRadius)
+      {
+        float2 repulse = normalize(P_position - N_position);
+        repulse /= dist;
+        sepPosSum += repulse;
+        sepCount++;
+      }
+
+      if (dist > 0.0 && dist <= _AlignmentNeighborhoodRadius)
+      {
+        aliVelSum += N_velocity;
+        aliCount++;
+      }
+
+      if (dist > 0.0 && dist <= _CohesionNeighborhoodRadius)
+      {
+        cohPosSum += N_position;
+        cohCount++;
+      }
+    }
+    GroupMemoryBarrierWithGroupSync();
+  }
+
+  if (idx >= count && !h.alive)
+    return;
+
+  float2 sepSteer = (0.0).xx;
+  if (sepCount > 0)
+  {
+    sepSteer = sepPosSum / (float) sepCount;
+    sepSteer = normalize(sepSteer) * _MaxSpeed;
+    sepSteer = sepSteer - P_velocity;
+    sepSteer = limit(sepSteer, _MaxSteerForce);
+  }
+
+  float2 aliSteer = (0.0).xx;
+  if (aliCount > 0)
+  {
+    aliSteer = aliVelSum / (float) aliCount;
+    aliSteer = normalize(aliSteer) * _MaxSpeed;
+    aliSteer = aliSteer - P_velocity;
+    aliSteer = limit(aliSteer, _MaxSteerForce);
+  }
+
+  float2 cohSteer = (0.0).xx;
+  if (cohCount > 0)
+  {
+    cohPosSum = cohPosSum / (float) cohCount;
+    cohSteer = cohPosSum - P_position;
+    cohSteer = normalize(cohSteer) * _MaxSpeed;
+    cohSteer = cohSteer - P_velocity;
+    cohSteer = limit(cohSteer, _MaxSteerForce);
+  }
+
+  force += aliSteer * _AlignmentWeight;
+  force += cohSteer * _CohesionWeight;
+  force += sepSteer * _SeparateWeight;
+
+  h.velocity.xz += limit(force, _MaxSteerForce);
+  h.velocity.xz += gradient(h.position) * _Gradient;
+
+  _Crowd[idx] = h;
+}
